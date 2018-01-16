@@ -1,0 +1,154 @@
+---
+title: "Motor Trend MPG Regression Model Analysis"
+author: "Trent Parkinson"
+date: "January 15, 2018"
+output:
+  pdf_document
+header-includes:
+    - \usepackage{caption}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\captionsetup[table]{labelformat=empty}
+
+## Overview
+
+This project explores the `mtcars` data set and explores how miles per gallon (MPG) is affected by different variables, specifically the affect automatic and manual transmissions have on MPG. The following will be answered,
+
+- Is an automatic or manual transmission better for MPG?
+
+- Quantify the MPG difference between automatic and manual transmissions.
+
+## Setting up environment
+
+Necessary libraries for loading, plotting, and model selection. Reading the `mtcars` dataset and making a copy in a `data.table`.
+
+```{r, message=FALSE}
+library(data.table)
+library(ggplot2)
+library(leaps)
+library(printr)
+
+data("mtcars")
+mtcars_num <-copy(mtcars)
+```
+
+## Data Structure
+
+Viewing `mtcars` data, and viewing structure of variables.
+
+```{r}
+head(mtcars)
+as.data.frame(t(apply(mtcars,2,class)))
+```
+
+## Data Processing
+
+Changing categorical variables to factors. Relabeling `am` to `Automatic` and `Manual`.
+
+```{r}
+mtcars$cyl <- factor(mtcars$cyl)
+mtcars$vs <- factor(mtcars$vs)
+mtcars$am <- factor(mtcars$am, labels = c("Automatic","Manual"))
+mtcars$gear <- factor(mtcars$gear)
+mtcars$carb <- factor(mtcars$carb)
+```
+
+## Visualizations
+
+Plotting the miles per gallon (MPG) for automatic and manual transmissions.
+
+```{r, fig.height= 4}
+plot1 <- ggplot(mtcars, aes(x=am, y=mpg)) +
+    geom_boxplot(aes(fill = am)) +
+    xlab("Transmission") +
+    ylab("MPG") +
+    theme(legend.position = "none")
+plot1
+```
+
+## Analysis
+
+It looks like there is a definite difference in the type of transmission for MPG. Performing a t-test will help verify if the difference in means is significant.
+
+```{r}
+auto_vs_manu_ttest <- t.test(mpg ~ am, mtcars)
+auto_vs_manu_ttest
+```
+
+The t-test rejected the null-hypothesis that the difference in means is equal to zero, with a p-value of $.0014$. Therefore there is a difference in transmission type, with manual transmissions having a higher MPG.
+
+## Linear Regression Fitting
+
+Since the project is trying to quantify the difference in MPG for automatic and manual transmissions. The best starting place is a simple linear model with transmission type as the dependent variable.
+
+```{r}
+basic_fit <- lm(mpg ~ am, mtcars)
+summary(basic_fit)$coefficients
+
+summary(basic_fit)$r.squared
+```
+
+The basic linear model with `am` as the only regressor explains $36\%$ of the variation, not a very good model. To gain a better model it gets tricky after one variable, since regressors can correlate with not only the predictor but also other regressors adding a variable that is highly correlated could help, but could also hurt the prediction.
+
+One method is called stepwise regression which uses AIC to choose the best model, the other method is called best subsets regression which goes through all possible models with the specified regressors and chooses the best model based on different criterion.
+
+```{r}
+everything_fit <- lm(mpg ~ ., mtcars)
+step_fit <- step(everything_fit,direction="both",trace=FALSE)
+
+best_subset <- regsubsets(mpg ~ ., mtcars, nvmax = 25)
+best_subset_summary <- summary(best_subset)
+adjr2 <- which.max(best_subset_summary$adjr2)
+cp <- which.min(best_subset_summary$cp)
+bic <- which.min(best_subset_summary$bic)
+best_set <- best_subset_summary$outmat[c(adjr2,cp),]
+best_set[,1:13]
+
+sub3_fit <- lm(mpg ~ am + wt + qsec, mtcars)
+sub5_fit <- lm(mpg ~ am + cyl + hp + wt + vs, mtcars)
+```
+
+## Model Selection
+
+Stepwise regression gave us a best model, but best subsets gave us two different models as well. Using Mallows's $C_p$ and BIC both returned model three as the best, while model five has the best for the adjusted $R^2$. The code below grabs the adjusted $R^2$ and also the p-value for the transmission type in the regression coefficients. Since the goal of the project is to quantify MPG, the best model would have confidence in this coefficient as well as explain the variance well.
+
+```{r}
+models <- c("mpg ~ am + wt + qsec", "mpg ~ am + wt + cyl + hp", "mpg ~ am + wt + cyl + hp + vs")
+adj_r_squared <- round(c(summary(sub3_fit)$adj.r.squared,
+                         summary(step_fit)$adj.r.squared,
+                         summary(sub5_fit)$adj.r.squared),4)
+amManual_Pvalues <- round(c(summary(sub3_fit)$coefficients["amManual",4],
+                            summary(step_fit)$coefficients["amManual",4],
+                            summary(sub5_fit)$coefficients["amManual",4]),4)
+results <- as.data.frame(cbind(models,adj_r_squared,amManual_Pvalues))
+results
+```
+
+## Checking Model
+
+The only model with a p-value for transmission type below $5\%$ is `mpg ~ am + wt + qsec`, it doesn't have the highest adjusted $R^2$ but its not much lower than the other two models.
+
+```{r}
+summary(sub3_fit)
+```
+
+Everything so far looks solid, but lets make sure this model fits our data well by printing the diagnostic plots.
+
+```{r}
+par(mfrow = c(2,2))
+plot(sub3_fit, col = "blue", lwd = 2)
+```
+
+- Residuals vs Fitted: The points are randomly scattered, but may have a slight non-linear relationship.
+- Normal Q-Q: The points pass normality, they deviate slightly from the diagonal, but they follow the diagonal fairly close.
+- Scale-Location: The upward slope line is worrisome, the residues spread slightly wider.
+- Residuals vs Leverage: No high leverage points.
+
+## Conclusions
+
+The best transmission type for MPG would have to be the manual transmission. Its confirmed by the t-test, as well as our final linear model. By having a manual transmission instead of an automatic the MPG will increase by 2.94 as can be seen in the best model's `amManual` coefficient.
+
+The model fit well with a $p < 0.05$ and and $R^2 = 0.85$, but the diagnostic plots did warn us that something may be missing in our model. I believe the true cause for these trends are do to the small sample size with little overlap on the parameters `wt` and `qsec`.
